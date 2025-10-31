@@ -2,14 +2,16 @@ import os
 import argparse
 import logging
 import json
-import volcenginesdkcore 
+import base64
 import volcenginesdkdts
 import volcenginesdkdts20180101 
 from typing import Optional, Final, Any, List
 from pydantic import Field
 from mcp_server_dts.config import load_config
-from mcp.server.fastmcp import FastMCP
-from mcp_server_dts import model
+from mcp.server.session import ServerSession
+from mcp.server.fastmcp import Context, FastMCP
+from starlette.requests import Request
+from mcp_server_dts import model, dts_client
 
 openapi_cli = None
 openapi_20180101_cli = None
@@ -23,46 +25,55 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Create MCP server
-mcp = FastMCP("DTS MCP Server", port=int(os.getenv("PORT", "8000")))
+mcp = FastMCP("DTS MCP Server", host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8000")))
 
 def main():
     parser = argparse.ArgumentParser(description="Run the DTS MCP Server")
     parser.add_argument("--config", "-c", help="Path to config file")  # 新增config参数
-    parser.add_argument("--transport", "-t", choices=["streamable-http","stdio"], default="stdio")
+    parser.add_argument("--transport", "-t", choices=["sse", "streamable-http","stdio"], default="stdio")
 
     args = parser.parse_args()
     try:
-        # 修改配置加载方式
-        if args.config:
-            config = load_config(args.config)
-        else:
-            config = load_config()
-        logger.info(f"Initialized DTS Base Service, config={config}")
-
-        # Initialize SDK
-        configuration = volcenginesdkcore.Configuration()
-        configuration.host = config.endpoint
-        configuration.ak = config.access_key_id
-        configuration.sk = config.access_key_secret
-        configuration.region = config.region
-
-        global openapi_cli, openapi_20180101_cli
-        volcenginesdkcore.Configuration.set_default(configuration)
-        openapi_cli = volcenginesdkdts.DTSApi()
-        openapi_20180101_cli = volcenginesdkdts20180101.DTS20180101Api()
-
         # Run the MCP Server
         logger.info(
             f"Starting DTS MCP Server with {args.transport} transport"
         )
         mcp.run(transport=args.transport)
-
     except Exception as e:
         logger.error(f"Error starting DTS MCP Server: {str(e)}")
         raise
 
-if __name__ == "__main__":
-    main()
+def get_client(ctx: Context[ServerSession, object], region:str = "cn-beijing") -> volcenginesdkdts.DTSApi:
+    # 从 context 中获取 header
+    raw_request: Request = ctx.request_context.request
+    logger.info(f"Request header: {raw_request.headers}")
+
+    auth = None
+    if raw_request:
+        # 从 header 的 authorization 字段读取 base64 编码后的 sts json
+        auth = raw_request.headers.get("authorization", None)
+    if auth is None:
+        # 如果 header 中没有认证信息，可能是 stdio 模式，尝试从环境变量获取
+        auth = os.getenv("authorization", None)
+    if auth is None:
+        # 获取认证信息失败
+        raise ValueError("Missing authorization info.")
+
+    if ' ' in auth:
+        _, base64_data = auth.split(' ', 1)
+    else:
+        base64_data = auth
+
+    # 解码 Base64
+    decoded_str = base64.b64decode(base64_data).decode('utf-8')
+    logger.info(f"Decoded STS JSON: {decoded_str}") 
+    data = json.loads(decoded_str)   
+    ak = data.get('AccessKeyId')
+    sk = data.get('SecretAccessKey')
+    session_token = data.get('SessionToken')
+    host = data.get('Host')
+
+    return dts_client.DTSClient(region, ak, sk, session_token, host)
 
 @mcp.tool(
     description="查询用户DTS迁移/订阅/同步任务列表（支持分页查询）,查询时需指定任务类型。根据任务名称查询任务时，支持模糊匹配，不支持正则表达式"
@@ -76,6 +87,7 @@ def describe_transmission_tasks(
     charge_type: Optional[model.ChargeType]=Field(default=None, description="计费类型"),
     page_number: int=Field(default= 1, description="分页页码"),  
     page_size: int=Field(default= 10, description="分页大小"),    
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域"),
 ) -> dict[str, Any]:
     logger.info(f"Describe DTS tasks, task_type={task_type}, page_number={page_number}, page_size={page_size}")
     MAX_PAGE_SIZE: Final = 100
@@ -93,7 +105,7 @@ def describe_transmission_tasks(
     )
 
     try:
-        rsp = openapi_cli.describe_transmission_tasks(req)
+        rsp = get_client(mcp.get_context(), region).describe_transmission_tasks(req)
         return rsp.to_dict()
     
     except Exception as e:
@@ -118,6 +130,7 @@ def create_transmission_task(
     create_backward_sync_task: bool=Field(default= False, description="是否创建反向同步任务"),
     traffic_spec: model.TrafficSpec=Field(default= model.TrafficSpec.standard, description="任务规格"),
     project_name: str=Field(default= "default", description="项目名称"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域"),
 ) -> dict[str, Any]:
     logger.info(f"Create DTS transmission task")
     try:
@@ -400,7 +413,7 @@ def create_transmission_task(
             create_backward_sync_task=create_backward_sync_task,
         )
 
-        rsp = openapi_cli.create_transmission_task(req)
+        rsp = get_client(mcp.get_context(), region).create_transmission_task(req)
         return rsp.to_dict()
     
     except Exception as e:
@@ -424,9 +437,9 @@ def get_subscription_settings(
 @mcp.tool(
     description="查询VPC列表，在创建源端/目的端是专网类型时，需要指定VPC和子网，可以调用该tool查询VPC列表",
 )
-def list_vpc() -> dict[str, Any]:
+def list_vpc(region: str=Field(default= "cn-beijing", description="DTS实例所在区域")) -> dict[str, Any]:
     try:
-        rsp = openapi_20180101_cli.list_vpc(volcenginesdkdts20180101.models.ListVPCRequest())
+        rsp = get_client(mcp.get_context(), region).list_vpc(volcenginesdkdts20180101.models.ListVPCRequest())
         return rsp.to_dict()
     
     except Exception as e:
@@ -436,9 +449,9 @@ def list_vpc() -> dict[str, Any]:
 @mcp.tool(
     description="查询VPC下的子网列表，在创建源端/目的端是专网类型时，需要指定VPC和子网，可以调用该tool查询VPC下的子网列表",
 )
-def list_vpc_subnets(vpc_id: str) -> dict[str, Any]:
+def list_vpc_subnets(vpc_id: str,region: str=Field(default= "cn-beijing", description="DTS实例所在区域")) -> dict[str, Any]:
     try:
-        rsp = openapi_20180101_cli.list_vpc_subnets(volcenginesdkdts20180101.models.ListVPCSubnetsRequest(vpc_id=vpc_id))
+        rsp = get_client(mcp.get_context(), region).list_vpc_subnets(volcenginesdkdts20180101.models.ListVPCSubnetsRequest(vpc_id=vpc_id))
         return rsp.to_dict()
     
     except Exception as e:
@@ -450,6 +463,7 @@ def list_vpc_subnets(vpc_id: str) -> dict[str, Any]:
 )
 def describe_transmission_task_info(
     task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe DTS transmission task info")
 
@@ -458,7 +472,7 @@ def describe_transmission_task_info(
     )
 
     try:
-        rsp = openapi_cli.describe_transmission_task_info(req)
+        rsp = get_client(mcp.get_context(), region).describe_transmission_task_info(req)
         return rsp.to_dict()
     
     except Exception as e:
@@ -480,6 +494,7 @@ def describe_transmission_task_progress(
     transfer_estimate_rows_desc: bool=Field(default=False, description="是否按照表的预估数据行数降序排列"),
     page_number: int = Field(default=1, description="页码"),
     page_size: int = Field(default=20, description="每页数量"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe DTS transmission task progress with task_id: {task_id}")
 
@@ -496,7 +511,7 @@ def describe_transmission_task_progress(
     )
 
     try:
-        rsp = openapi_cli.describe_transmission_task_progress(req)
+        rsp = get_client(mcp.get_context(), region).describe_transmission_task_progress(req)
         return rsp.to_dict()
     
     except Exception as e:
@@ -517,6 +532,7 @@ def modify_transmission_task(
     solution_settings: model.SolutionSettings=Field(description="解决方案配置"),
     task_name: Optional[str]=Field(default=None, description="任务名称"),
     traffic_spec: Optional[model.TrafficSpec]=Field(default=None, description="任务规格"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> str:
     logger.info(f"Modify DTS transmission task with task_id: {task_id}")
     if src_config.endpoint_type is None or dest_config.endpoint_type is None:
@@ -532,7 +548,7 @@ def modify_transmission_task(
     )
 
     try:
-        rsp = openapi_cli.modify_transmission_task(req)
+        rsp = get_client(mcp.get_context(), region).modify_transmission_task(req)
         return json.dumps(rsp) 
     
     except Exception as e:
@@ -543,7 +559,8 @@ def modify_transmission_task(
     description="启动传输任务，启动校验任务使用start_validation_task"
 )
 def start_transmission_task(
-    task_id: str
+    task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     """Start a DTS transmission task.
 
@@ -557,7 +574,7 @@ def start_transmission_task(
     )
 
     try:
-        rsp = openapi_cli.start_transmission_task(req)
+        rsp = get_client(mcp.get_context(), region).start_transmission_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -570,7 +587,8 @@ def start_transmission_task(
     description="暂停迁移/同步/订阅任务，暂停校验任务使用suspend_vildation_task"
 )
 def suspend_transmission_task(
-    task_id: str
+    task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Suspend DTS transmission task with task_id: {task_id}")
 
@@ -579,7 +597,7 @@ def suspend_transmission_task(
     )
 
     try:
-        rsp = openapi_cli.suspend_transmission_task(req)
+        rsp = get_client(mcp.get_context(), region).suspend_transmission_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -592,7 +610,8 @@ def suspend_transmission_task(
     description="恢复传输任务，任务暂停后可以通过该tool恢复任务。恢复校验任务使用resume_validation_task"
 )
 def resume_transmission_task(
-    task_id: str = Field(description="任务ID")
+    task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Resume DTS transmission task with task_id: {task_id}")
 
@@ -601,7 +620,7 @@ def resume_transmission_task(
     )
 
     try:
-        rsp = openapi_cli.resume_transmission_task(req)
+        rsp = get_client(mcp.get_context(), region).resume_transmission_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -614,7 +633,8 @@ def resume_transmission_task(
     description="重试迁移/同步/订阅任务，重试校验任务使用retry_validation_task"
 )
 def retry_transmission_task(
-    task_id: str = Field(description="任务ID")
+    task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Retry DTS transmission task with task_id: {task_id}")
 
@@ -623,7 +643,7 @@ def retry_transmission_task(
     )
 
     try:
-        rsp = openapi_cli.retry_transmission_task(req)
+        rsp = get_client(mcp.get_context(), region).retry_transmission_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -636,14 +656,15 @@ def retry_transmission_task(
     description="批量启动迁移/同步/订阅任务"
 )
 def start_transmission_tasks(
-    task_ids: list[str]
+    task_ids: list[str] = Field(description="任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Start DTS transmission tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.StartTransmissionTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.start_transmission_tasks(req)
+        rsp = get_client(mcp.get_context(), region).start_transmission_tasks(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -655,14 +676,15 @@ def start_transmission_tasks(
     description="批量暂停迁移/同步/订阅任务"
 )
 def suspend_transmission_tasks(
-    task_ids: list[str]
+    task_ids: list[str] = Field(description="任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Suspend DTS transmission tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.SuspendTransmissionTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.suspend_transmission_tasks(req)
+        rsp = get_client(mcp.get_context(), region).suspend_transmission_tasks(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -674,14 +696,15 @@ def suspend_transmission_tasks(
     description="批量恢复迁移/同步/订阅任务"
 )
 def resume_transmission_tasks(
-    task_ids: list[str]
+    task_ids: list[str] = Field(description="任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Resume DTS transmission tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.ResumeTransmissionTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.resume_transmission_tasks(req)
+        rsp = get_client(mcp.get_context(), region).resume_transmission_tasks(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -693,14 +716,15 @@ def resume_transmission_tasks(
     description="批量重试迁移/同步/订阅任务"
 )
 def retry_transmission_tasks(
-    task_ids: list[str]
-) -> str:
+    task_ids: list[str] = Field(description="任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
+) -> dict[str, Any]:
     logger.info(f"Retry DTS transmission tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.RetryTransmissionTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.retry_transmission_tasks(req)
+        rsp = get_client(mcp.get_context(), region).retry_transmission_tasks(req)
         return json.dumps(rsp)
     except Exception as e:
         logger.error(f"Error in retry_transmission_tasks: {str(e)}")
@@ -713,6 +737,7 @@ def spawn_swimming_lane(
     task_id: str = Field(description="任务ID"),
     database: str = Field(description="数据库名称"),
     tables: list[str] = Field(description="表名称列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Spawn swimming lane for DTS transmission task with task_id: {task_id}, database: {database}, tables: {tables}")
     req = volcenginesdkdts.models.SpawnSwimmingLaneRequest(
@@ -721,7 +746,7 @@ def spawn_swimming_lane(
         tables=tables
     )
     try:
-        rsp = openapi_cli.spawn_swimming_lane(req)
+        rsp = get_client(mcp.get_context(), region).spawn_swimming_lane(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -737,6 +762,7 @@ def create_subscription_group(
     group_name: str = Field(description="消费组名称"),
     username: str = Field(description="用户名"),
     password: str = Field(description="密码"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Create subscription group for DTS transmission task with task_id: {task_id}, group_name: {group_name}, username: {username}, password: {password}")
     req = volcenginesdkdts.models.CreateSubscriptionGroupRequest(
@@ -746,7 +772,7 @@ def create_subscription_group(
         password=password
     )
     try:
-        rsp = openapi_cli.create_subscription_group(req)
+        rsp = get_client(mcp.get_context(), region).create_subscription_group(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -758,14 +784,15 @@ def create_subscription_group(
     description="查询订阅任务消费组列表，仅支持目的端是内置Kafka的订阅任务"
 )
 def describe_subscription_groups(
-    task_id: str = Field(description="任务ID")
+    task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe subscription groups for DTS transmission task with task_id: {task_id}")
     req = volcenginesdkdts.models.DescribeSubscriptionGroupsRequest(
         task_id=task_id
     )
     try:
-        rsp = openapi_cli.describe_subscription_groups(req)
+        rsp = get_client(mcp.get_context(), region).describe_subscription_groups(req)
         return rsp.to_dict()
     except Exception as e:
         logger.error(f"Error in describe_subscription_groups: {str(e)}")
@@ -779,6 +806,7 @@ def update_subscription_group(
     group_name: str = Field(description="消费组名称"),
     username: str = Field(description="用户名"),
     password: str = Field(description="密码"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Update subscription group for DTS transmission task with task_id: {task_id}, group_name: {group_name}, username: {username}, password: {password}")
     req = volcenginesdkdts.models.UpdateSubscriptionGroupRequest(
@@ -788,7 +816,7 @@ def update_subscription_group(
         password=password
     )
     try:
-        rsp = openapi_cli.update_subscription_group(req)
+        rsp = get_client(mcp.get_context(), region).update_subscription_group(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -801,13 +829,14 @@ def update_subscription_group(
 )
 def precheck_async(
     task_id: str = Field(description="任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Precheck DTS transmission task with task_id: {task_id}")
     req = volcenginesdkdts20180101.models.PreCheckAsyncRequest(
         task_id=task_id,
     )
     try:
-        rsp = openapi_20180101_cli.pre_check_async(req)
+        rsp = get_client(mcp.get_context(), region).pre_check_async(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -820,13 +849,14 @@ def precheck_async(
 )
 def get_async_pre_check_result(
     precheck_id: str = Field(description="预检查ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Get async pre check result for DTS transmission task with precheck_id: {precheck_id}")
     req = volcenginesdkdts20180101.models.GetAsyncPreCheckResultRequest(
         id=precheck_id,
     )
     try:
-        rsp = openapi_20180101_cli.get_async_pre_check_result(req)
+        rsp = get_client(mcp.get_context(), region).get_async_pre_check_result(req)
         return rsp.to_dict()
     except Exception as e:
         logger.error(f"Error in get_async_pre_check_result: {str(e)}")
@@ -838,6 +868,7 @@ def get_async_pre_check_result(
 def add_tags_to_resource(
     task_ids: list[str] = Field(description="任务ID列表"),
     tags: list[model.TagObject] = Field(description="标签列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> str:
     logger.info(f"Add tags to DTS transmission task with task_ids: {task_ids}, tags: {tags}")
     req = volcenginesdkdts.models.AddTagsToResourceRequest(
@@ -846,7 +877,7 @@ def add_tags_to_resource(
         tags=[tag.dict(exclude_none=True, by_alias=True) for tag in tags],
     )
     try:
-        rsp = openapi_cli.add_tags_to_resource(req)
+        rsp = get_client(mcp.get_context(), region).add_tags_to_resource(req)
         return json.dumps(rsp)
     except Exception as e:
         logger.error(f"Error in add_tags_to_resource: {str(e)}")
@@ -858,6 +889,7 @@ def add_tags_to_resource(
 def remove_tags_from_resource(
     task_ids: list[str] = Field(description="任务ID列表"),
     tag_keys: list[str] = Field(description="标签键列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> str:
     logger.info(f"Remove tags from DTS transmission task with task_ids: {task_ids}, tag_keys: {tag_keys}")
     req = volcenginesdkdts.models.RemoveTagsFromResourceRequest(
@@ -865,7 +897,7 @@ def remove_tags_from_resource(
         tag_keys=tag_keys,
     )
     try:
-        rsp = openapi_cli.remove_tags_from_resource(req)
+        rsp = get_client(mcp.get_context(), region).remove_tags_from_resource(req)
         return json.dumps(rsp)
     except Exception as e:
         logger.error(f"Error in remove_tags_from_resource: {str(e)}")
@@ -879,6 +911,7 @@ def describe_tags_by_resource(
     tag_filters: Optional[list[model.TagFilterObject]] = Field(default=None, description="标签过滤列表"),
     page_number: int=Field(default= 1, description="分页页码"),  
     page_size: int=Field(default= 10, description="分页大小"), 
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe tags by DTS transmission task with task_ids: {task_ids}")
     req = volcenginesdkdts.models.DescribeTagsByResourceRequest(
@@ -888,7 +921,7 @@ def describe_tags_by_resource(
         page_size=page_size,
     )
     try:
-        rsp = openapi_cli.describe_tags_by_resource(req)
+        rsp = get_client(mcp.get_context(), region).describe_tags_by_resource(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -906,6 +939,7 @@ def modify_instance_order(
     task_id: str = Field(description="任务ID"),
     convert_post_paid_to_pre_paid: Optional[model.ConvertPostPaidToPrePaid] = Field(default=None, description="是否将按量计费转为包年包月计费"),
     modify_instance_spec: Optional[model.ModifyInstanceSpec] = Field(default=None, description="修改实例规格"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Modify DTS transmission task order with task_id: {task_id}, convert_post_paid_to_pre_paid: {convert_post_paid_to_pre_paid}, modify_instance_spec: {modify_instance_spec}")
     req = volcenginesdkdts.models.ModifyInstanceOrderRequest(
@@ -915,7 +949,7 @@ def modify_instance_order(
         one_step=True,
     )
     try:
-        rsp = openapi_cli.modify_instance_order(req)
+        rsp = get_client(mcp.get_context(), region).modify_instance_order(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -936,6 +970,7 @@ def create_validation_task(
                                           '''),
     task_name: str=Field(default='', description="任务名称"),
     sample_rate: int=Field(default=100, description="全量校验任务采样率"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     default_error_behavior_settings = model.ErrorBehaviorSettings(
         MaxRetrySeconds=600,
@@ -1060,7 +1095,7 @@ def create_validation_task(
         
     )
     try:
-        rsp = openapi_cli.create_validation_task(req)
+        rsp = get_client(mcp.get_context(), region).create_validation_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1078,6 +1113,7 @@ def describe_validation_tasks(
     validation_status: Optional[model.ValidationStatus]=Field(default=None, description="校验结果"),
     page_number: int=Field(default= 1, description="分页页码"),  
     page_size: int=Field(default= 10, description="分页大小"),    
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     MAX_PAGE_SIZE: Final = 100
     page_size = min(page_size, MAX_PAGE_SIZE)
@@ -1093,7 +1129,7 @@ def describe_validation_tasks(
     )
 
     try:
-        rsp = openapi_cli.describe_validation_tasks(req)
+        rsp = get_client(mcp.get_context(), region).describe_validation_tasks(req)
         return rsp.to_dict()
     
     except Exception as e:
@@ -1105,13 +1141,14 @@ def describe_validation_tasks(
 )
 def describe_validation_task_info(
     task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     req = volcenginesdkdts.models.DescribeValidationTaskInfoRequest(
         task_id=task_id
     )
 
     try:
-        rsp = openapi_cli.describe_validation_task_info(req)
+        rsp = get_client(mcp.get_context(), region).describe_validation_task_info(req)
         return rsp.to_dict()
     
     except Exception as e:
@@ -1122,7 +1159,8 @@ def describe_validation_task_info(
     description="启动校验任务"
 )
 def start_validation_task(
-    task_id: str = Field(description="校验任务ID")
+    task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Start DTS transmission task with task_id: {task_id}")
 
@@ -1131,7 +1169,7 @@ def start_validation_task(
     )
 
     try:
-        rsp = openapi_cli.start_validation_task(req)
+        rsp = get_client(mcp.get_context(), region).start_validation_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1144,7 +1182,8 @@ def start_validation_task(
     description="暂停校验任务"
 )
 def suspend_validation_task(
-    task_id: str = Field(description="校验任务ID")
+    task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Suspend DTS validation task with task_id: {task_id}")
 
@@ -1153,7 +1192,7 @@ def suspend_validation_task(
     )
 
     try:
-        rsp = openapi_cli.suspend_validation_task(req)
+        rsp = get_client(mcp.get_context(), region).suspend_validation_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1166,7 +1205,8 @@ def suspend_validation_task(
     description="恢复校验任务，任务暂停后可以通过该tool恢复任务"
 )
 def resume_validation_task(
-    task_id: str = Field(description="校验任务ID")
+    task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Resume DTS validation task with task_id: {task_id}")
 
@@ -1175,7 +1215,7 @@ def resume_validation_task(
     )
 
     try:
-        rsp = openapi_cli.resume_validation_task(req)
+        rsp = get_client(mcp.get_context(), region).resume_validation_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1188,7 +1228,8 @@ def resume_validation_task(
     description="重试校验任务"
 )
 def retry_validation_task(
-    task_id: str = Field(description="校验任务ID")
+    task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Retry DTS validation task with task_id: {task_id}")
 
@@ -1197,7 +1238,7 @@ def retry_validation_task(
     )
 
     try:
-        rsp = openapi_cli.retry_validation_task(req)
+        rsp = get_client(mcp.get_context(), region).retry_validation_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1210,14 +1251,15 @@ def retry_validation_task(
     description="批量启动校验任务"
 )
 def start_validation_tasks(
-    task_ids: list[str]
+    task_ids: list[str] = Field(description="校验任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Start DTS validation tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.StartValidationTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.start_validation_tasks(req)
+        rsp = get_client(mcp.get_context(), region).start_validation_tasks(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1229,14 +1271,15 @@ def start_validation_tasks(
     description="批量暂停校验任务"
 )
 def suspend_validation_tasks(
-    task_ids: list[str]
+    task_ids: list[str] = Field(description="校验任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Suspend DTS validation tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.SuspendValidationTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.suspend_validation_tasks(req)
+        rsp = get_client(mcp.get_context(), region).suspend_validation_tasks(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1248,14 +1291,15 @@ def suspend_validation_tasks(
     description="批量恢复校验任务"
 )
 def resume_validation_tasks(
-    task_ids: list[str]
+    task_ids: list[str] = Field(description="校验任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Resume DTS validation tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.ResumeValidationTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.resume_validation_tasks(req)
+        rsp = get_client(mcp.get_context(), region).resume_validation_tasks(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1267,14 +1311,15 @@ def resume_validation_tasks(
     description="批量重试校验任务"
 )
 def retry_validation_tasks(
-    task_ids: list[str]
-) -> str:
+    task_ids: list[str] = Field(description="校验任务ID列表"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
+) -> dict[str, Any]:
     logger.info(f"Retry DTS validation tasks with task_ids: {task_ids}")
     req = volcenginesdkdts.models.RetryValidationTasksRequest(
         task_ids=task_ids
     )
     try:
-        rsp = openapi_cli.retry_validation_tasks(req)
+        rsp = get_client(mcp.get_context(), region).retry_validation_tasks(req)
         return json.dumps(rsp)
     except Exception as e:
         logger.error(f"Error in retry_validation_tasks: {str(e)}")
@@ -1284,7 +1329,8 @@ def retry_validation_tasks(
     description="下载校验结果"
 )
 def download_validation_task_result(
-    task_id: str = Field(description="校验任务ID")
+    task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Download DTS validation task result with task_id: {task_id}")
 
@@ -1293,7 +1339,7 @@ def download_validation_task_result(
     )
 
     try:
-        rsp = openapi_cli.download_validation_task_result(req)
+        rsp = get_client(mcp.get_context(), region).download_validation_task_result(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1308,7 +1354,8 @@ def download_validation_task_result(
 def describe_validation_task_result(
     task_id: str = Field(description="校验任务ID"),
     page_number: int = Field(description="分页页码", default=1),
-    page_size: int = Field(description="分页大小", default=10)
+    page_size: int = Field(description="分页大小", default=10),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe DTS validation task result with task_id: {task_id}")
 
@@ -1319,7 +1366,7 @@ def describe_validation_task_result(
     )
 
     try:
-        rsp = openapi_cli.describe_validation_task_result(req)
+        rsp = get_client(mcp.get_context(), region).describe_validation_task_result(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1336,7 +1383,8 @@ def get_db_table_diff_details(
     db_name: str = Field(description="数据库名"),
     table_name: str = Field(description="表名"),
     page_number: int = Field(description="分页页码", default=1),
-    page_size: int = Field(description="分页大小", default=10)
+    page_size: int = Field(description="分页大小", default=10),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     req = volcenginesdkdts.models.GetDBTableDiffDetailsRequest(
         task_id=task_id,
@@ -1347,7 +1395,7 @@ def get_db_table_diff_details(
     )
 
     try:
-        rsp = openapi_cli.get_db_table_diff_details(req)
+        rsp = get_client(mcp.get_context(), region).get_db_table_diff_details(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1361,6 +1409,7 @@ def get_db_table_diff_details(
 )
 def generate_validation_result_file(
     task_id: str = Field(description="校验任务ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> str:
     logger.info(f"Generate DTS validation task result file with task_id: {task_id}")
     req = volcenginesdkdts.models.GenerateValidationResultFileRequest(
@@ -1368,7 +1417,7 @@ def generate_validation_result_file(
     )
 
     try:
-        rsp = openapi_cli.generate_validation_result_file(req)
+        rsp = get_client(mcp.get_context(), region).generate_validation_result_file(req)
         return json.dumps(rsp) 
     
     except Exception as e:
@@ -1383,6 +1432,7 @@ def generate_validation_result_file(
 def describe_supported_validation_types(
     src_datasource: model.DataSource = Field(description="源端数据源信息,字段需符合DataSource alias名称要求"),
     dst_datasource: model.DataSource = Field(description="目的端数据源信息,字段需符合DataSource alias名称要求"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe supported validation types with src_datasource: {src_datasource}, dst_datasource: {dst_datasource}")
     if src_datasource.endpoint_type is None or dst_datasource.endpoint_type is None:
@@ -1393,7 +1443,7 @@ def describe_supported_validation_types(
     )
 
     try:
-        rsp = openapi_cli.describe_supported_validation_types(req)
+        rsp = get_client(mcp.get_context(), region).describe_supported_validation_types(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1410,6 +1460,7 @@ def describe_supported_validation_types(
 def modify_validation_task(
     task_id: str = Field(description="校验任务ID"),
     solution_settings: model.SolutionSettings=Field(description="解决方案配置"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Update DTS validation task with task_id: {task_id}")
 
@@ -1419,7 +1470,7 @@ def modify_validation_task(
     )
 
     try:
-        rsp = openapi_cli.modify_validation_task(req)
+        rsp = get_client(mcp.get_context(), region).modify_validation_task(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1433,7 +1484,8 @@ def modify_validation_task(
 )
 def create_data_source(
     name: str = Field(description="数据源名称"),
-    data_source: model.DataSource = Field(description="数据源配置")
+    data_source: model.DataSource = Field(description="数据源配置"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Create DTS data source with name: {name}, data_source: {data_source}")
     data_source.name = name
@@ -1442,7 +1494,7 @@ def create_data_source(
     )
 
     try:
-        rsp = openapi_cli.create_data_source(req)
+        rsp = get_client(mcp.get_context(), region).create_data_source(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1461,6 +1513,7 @@ def list_data_source(
     order_by: Optional[model.ListDataSourceOrderBy] = Field(default=model.ListDataSourceOrderBy.order_by_create_time_desc, description="排序规则"),
     page_size: Optional[int] = Field(default=10, description="每页数量"),
     page_number: Optional[int] = Field(default=1, description="页码"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"List DTS data source with categories: {categories}, endpoint_types: {endpoint_types}, name_prefix: {name_prefix}, order_by: {order_by}, page_size: {page_size}, page_number: {page_number}")
 
@@ -1474,7 +1527,7 @@ def list_data_source(
     )
 
     try:
-        rsp = openapi_cli.list_data_source(req)
+        rsp = get_client(mcp.get_context(), region).list_data_source(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1488,6 +1541,7 @@ def list_data_source(
 )
 def describe_data_source(
     data_source_id: str = Field(description="数据源ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Describe DTS data source with data_source_id: {data_source_id}")
 
@@ -1496,7 +1550,7 @@ def describe_data_source(
     )
 
     try:
-        rsp = openapi_cli.describe_data_source(req)
+        rsp = get_client(mcp.get_context(), region).describe_data_source(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1511,7 +1565,8 @@ def describe_data_source(
 )
 def modify_data_source(
     data_source_id: str = Field(description="数据源ID"),
-    data_source: model.DataSource = Field(description="数据源配置")
+    data_source: model.DataSource = Field(description="数据源配置"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> dict[str, Any]:
     logger.info(f"Modify DTS data source with data_source_id: {data_source_id}")
     data_source.datasource_id = data_source_id 
@@ -1521,7 +1576,7 @@ def modify_data_source(
     )
 
     try:
-        rsp = openapi_cli.modify_data_source(req)
+        rsp = get_client(mcp.get_context(), region).modify_data_source(req)
         if rsp is None:
             return {}
         return rsp.to_dict()
@@ -1535,6 +1590,7 @@ def modify_data_source(
 )
 def delete_data_source(
     data_source_id: str = Field(description="数据源ID"),
+    region: str=Field(default= "cn-beijing", description="DTS实例所在区域")
 ) -> str:
     logger.info(f"Delete DTS data source with data_source_id: {data_source_id}")
     req = volcenginesdkdts.models.DeleteDataSourceRequest(
@@ -1542,9 +1598,12 @@ def delete_data_source(
     )
 
     try:
-        rsp = openapi_cli.delete_data_source(req)
+        rsp = get_client(mcp.get_context(), region).delete_data_source(req)
         return json.dumps(rsp)
     
     except Exception as e:
         logger.error(f"Error in delete_data_source: {str(e)}")
         return str(e)
+
+if __name__ == "__main__":
+    main()

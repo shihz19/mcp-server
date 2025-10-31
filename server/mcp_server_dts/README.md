@@ -3,7 +3,7 @@
 
 ## Tools
 
-### 1. `describe_transmission_tasks`
+### Tool 1: describe_transmission_tasks
 #### 详细描述：
 查询用户DTS迁移/订阅/同步任务列表（支持分页查询）,查询时需指定任务类型。根据任务名称查询任务时，支持模糊匹配，不支持正则表达式。
 
@@ -22,7 +22,7 @@
 #### 触发示例：
 `"列出我的 DTS 同步任务"`
 
-### 2. `create_transmission_task`
+### Tool 2: create_transmission_task
 #### 详细描述：
 创建迁移/订阅/同步任务。
 
@@ -41,7 +41,7 @@
 #### 触发示例：
 `"创建一个DTS同步任务， 源端是专有网络mysql，私网是信息是vpc-3rebt5uf5fr405zsk2if9i3md subnet-2bznv8i16voqo2dx0efg0tngw，地址是192.168.0.65 3306，用户是username，密码是password;目的端是火山mysql mysql-12345，用户是username，密码是password,同步test这个库下面的所有表"`
 
-### 3. `list_vpc`
+### Tool 3: list_vpc
 #### 详细描述：
 查询VPC列表.
 #### 调试所需的输入参数:
@@ -52,7 +52,7 @@
 #### 触发示例：
 `"查询VPC列表"`
 
-### 4. `list_vpc_subnets`
+### Tool 4: list_vpc_subnets
 #### 详细描述：
 查询VPC下的子网列表。
 #### 调试所需的输入参数:
@@ -63,7 +63,7 @@
 #### 触发示例：
 `"查询VPC vpc-12345 下的子网列表"`
 
-### 5. `describe_transmission_task_info`
+### Tool 5: describe_transmission_task_info
 #### 详细描述：
 查询 DTS 迁移/订阅/同步任务的详细信息。
 #### 调试所需的输入参数:
@@ -74,7 +74,7 @@
 #### 触发示例：
 `"查询任务 12345 的详细信息"`
 
-### 6. `describe_transmission_task_progress`
+### Tool 6: describe_transmission_task_progress
 #### 详细描述：
 查询传输任务的详细进度。
 #### 调试所需的输入参数:
@@ -93,7 +93,7 @@
 #### 触发示例：
 `"查询任务 12345 全量阶段的同步进度"`
 
-### 7. `modify_transmission_task`
+### Tool 7: modify_transmission_task
 #### 详细描述：
 修改传输/订阅/同步任务。
 #### 调试所需的输入参数:
@@ -109,7 +109,7 @@
 #### 触发示例：
 `"修改指定任务的源端数据源配置"`
 
-### 8. `start_transmission_task`
+### Tool 8: start_transmission_task
 #### 详细描述：
 启动传输任务。
 #### 调试所需的输入参数:
@@ -118,7 +118,7 @@
 #### 触发示例：
 `"启动任务 12345"`
 
-### 9. `suspend_transmission_task`
+### Tool 9: suspend_transmission_task
 #### 详细描述：
 暂停迁移/同步/订阅任务。
 #### 调试所需的输入参数:
@@ -127,7 +127,7 @@
 #### 触发示例：
 `"暂停任务 12345"`
 
-### 10. `resume_transmission_task`
+### Tool 10: resume_transmission_task
 #### 详细描述：
 恢复传输任务。
 #### 调试所需的输入参数:
@@ -136,7 +136,7 @@
 #### 触发示例：
 `"恢复任务 12345"`
 
-### 11. `retry_transmission_task`
+### Tool 11: retry_transmission_task
 #### 详细描述：
 重试迁移/同步/订阅任务。
 #### 调试所需的输入参数:
@@ -145,7 +145,7 @@
 #### 触发示例：
 `"重试任务 12345"`
 
-### 12. `start_transmission_tasks`
+### Tool 12: start_transmission_tasks
 #### 详细描述：
 批量启动迁移/同步/订阅任务。
 #### 调试所需的输入参数:
@@ -154,7 +154,7 @@
 #### 触发示例：
 `"启动任务 123 和 456"`
 
-### 13. `suspend_transmission_tasks`
+### Tool 13: suspend_transmission_tasks
 #### 详细描述：
 批量暂停迁移/同步/订阅任务。
 #### 调试所需的输入参数:
@@ -163,7 +163,7 @@
 #### 触发示例：
 `"暂停任务 123 和 456"`
 
-### 14. `resume_transmission_tasks`
+### Tool 14: resume_transmission_tasks
 #### 详细描述：
 批量恢复迁移/同步/订阅任务。
 #### 调试所需的输入参数:
@@ -172,7 +172,7 @@
 #### 触发示例：
 `"恢复任务 123 和 456"`
 
-### 15. `retry_transmission_tasks`
+### Tool 15: retry_transmission_tasks
 #### 详细描述：
 批量重试迁移/同步/订阅任务。
 #### 调试所需的输入参数:
@@ -181,7 +181,7 @@
 #### 触发示例：
 `"重试任务 123 和 456"`
 
-### 16. `spawn_swimming_lane`
+### Tool 16: spawn_swimming_lane
 #### 详细描述：
 配置任务多泳道，支持配置表级别泳道，将延迟表拆分到独立泳道进行同步，降低整体延迟。
 #### 调试所需的输入参数:
@@ -192,7 +192,7 @@
 #### 触发示例：
 `"为任务 1234，business.task表配置泳道"`
 
-### 17. `create_subscription_group`
+### Tool 17: create_subscription_group
 #### 详细描述：
 创建订阅任务消费组，仅支持目的端是内置Kafka的订阅任务。
 #### 调试所需的输入参数:
@@ -204,7 +204,7 @@
 #### 触发示例：
 `"为任务 1234 创建消费组 sub，用户密码是 username 和 password"`
 
-### 18. `describe_subscription_groups`
+### Tool 18: describe_subscription_groups
 #### 详细描述：
 查询订阅任务消费组列表，仅支持目的端是内置Kafka的订阅任务。
 #### 调试所需的输入参数:
@@ -213,7 +213,7 @@
 #### 触发示例：
 `"查询任务 1234 的消费组列表"`
 
-### 19. `update_subscription_group`
+### Tool 19: update_subscription_group
 #### 详细描述：
 更新订阅任务消费组，仅支持目的端是内置Kafka的订阅任务。
 #### 调试所需的输入参数:
@@ -225,7 +225,7 @@
 #### 触发示例：
 `"更新任务 1234 的消费组 sub，用户密码是 username 和 password2"`
 
-### 20. `precheck_async`
+### Tool 20: precheck_async
 #### 详细描述：
 创建预检查任务。
 #### 调试所需的输入参数:
@@ -236,7 +236,7 @@
 #### 触发示例：
 `"为任务 1234 创建预检查任务"`
 
-### 21. `get_async_pre_check_result`
+### Tool 21: get_async_pre_check_result
 #### 详细描述：
 根据预检查ID查询预检查结果。
 #### 调试所需的输入参数:
@@ -247,7 +247,7 @@
 #### 触发示例：
 `"查询预检查任务 1234 的结果"`
 
-### 22. `add_tags_to_resource`
+### Tool 22: add_tags_to_resource
 #### 详细描述：
 绑定标签到DTS任务。
 #### 调试所需的输入参数:
@@ -257,7 +257,7 @@
 #### 触发示例：
 `"为任务 12345 添加标签 key1:value1"`
 
-### 23. `remove_tags_from_resource`
+### Tool 23: remove_tags_from_resource
 #### 详细描述：
 解绑DTS任务的标签。
 #### 调试所需的输入参数:
@@ -269,7 +269,7 @@
 #### 触发示例：
 `"为任务 12345 解绑标签 key1"`
 
-### 24. `describe_tags_by_resource`
+### Tool 24: describe_tags_by_resource
 #### 详细描述：
 查询DTS任务的标签。
 #### 调试所需的输入参数:
@@ -283,7 +283,7 @@
 #### 触发示例：
 `"查询任务 12345 的标签"`
 
-### 25. `modify_instance_order`
+### Tool 25: modify_instance_order
 #### 详细描述：
 将任务计费类型由按量计费转为包年包月计费；或修改DTS任务规格（仅迁移任务和同步任务支持）。
 #### 调试所需的输入参数:
@@ -294,7 +294,7 @@
 #### 触发示例：
 `"将任务 12345 的计费类型转为包年包月"`
 
-### 26. `create_validation_task`
+### Tool 26: create_validation_task
 #### 详细描述：
 创建DTS校验任务。
 #### 调试所需的输入参数:
@@ -309,7 +309,7 @@
 #### 触发示例：
 `"为任务 12345 创建MySQL全量内容校验任务validation1，校验business库下的所有表"`
 
-### 27. `describe_validation_tasks`
+### Tool 27: describe_validation_tasks
 #### 详细描述：
 查询用户DTS校验任务列表（支持分页查询）,查询时需指定任务类型。根据任务名称查询任务时，支持模糊匹配，不支持正则表达式。
 #### 调试所需的输入参数:
@@ -325,7 +325,7 @@
 #### 触发示例：
 `"我有哪些DTS校验任务"`
 
-### 28. `describe_validation_task_info`
+### Tool 28: describe_validation_task_info
 #### 详细描述：
 查询 DTS 校验任务的详细信息。
 #### 调试所需的输入参数:
@@ -336,7 +336,7 @@
 #### 触发示例：
 `"查询校验任务 12345 的详细信息"`
 
-### 29. `start_validation_task`
+### Tool 29: start_validation_task
 #### 详细描述：
 启动校验任务。
 #### 调试所需的输入参数:
@@ -345,7 +345,7 @@
 #### 触发示例：
 `"启动校验任务 12345"`
 
-### 30. `suspend_validation_task`
+### Tool 30: suspend_validation_task
 #### 详细描述：
 暂停校验任务。
 #### 调试所需的输入参数:
@@ -354,7 +354,7 @@
 #### 触发示例：
 `"暂停校验任务 12345"`
 
-### 31. `resume_validation_task`
+### Tool 31: resume_validation_task
 #### 详细描述：
 恢复校验任务。
 #### 调试所需的输入参数:
@@ -363,7 +363,7 @@
 #### 触发示例：
 `"恢复校验任务 12345"`
 
-### 32. `retry_validation_task`
+### Tool 32: retry_validation_task
 #### 详细描述：
 重试校验任务。
 #### 调试所需的输入参数:
@@ -372,7 +372,7 @@
 #### 触发示例：
 `"重试校验任务 12345"`
 
-### 33. `start_validation_tasks`
+### Tool 33: start_validation_tasks
 #### 详细描述：
 批量启动校验任务。
 #### 调试所需的输入参数:
@@ -381,7 +381,7 @@
 #### 触发示例：
 `"启动校验任务 12345和67890"`
 
-### 34. `suspend_validation_tasks`
+### Tool 34: suspend_validation_tasks
 #### 详细描述：
 批量暂停校验任务。
 #### 调试所需的输入参数:
@@ -390,7 +390,7 @@
 #### 触发示例：
 `"暂停校验任务 12345和67890"`
 
-### 35. `resume_validation_task`
+### Tool 35: resume_validation_tasks
 #### 详细描述：
 批量恢复校验任务。
 #### 调试所需的输入参数:
@@ -399,7 +399,7 @@
 #### 触发示例：
 `"恢复校验任务 12345和67890"`
 
-### 36. `retry_validation_tasks`
+### Tool 36: retry_validation_tasks
 #### 详细描述：
 批量重试校验任务。
 #### 调试所需的输入参数:
@@ -408,7 +408,7 @@
 #### 触发示例：
 `"重试校验任务 12345和67890"`
 
-### 37. `download_validation_task_result`
+### Tool 37: download_validation_task_result
 #### 详细描述：
 下载校验结果。
 #### 调试所需的输入参数:
@@ -417,7 +417,7 @@
 #### 触发示例：
 `"下载校验任务 12345 的结果"`
 
-### 38. `describe_validation_task_result`
+### Tool 38: describe_validation_task_result
 #### 详细描述：
 查询校验任务结果。
 #### 调试所需的输入参数:
@@ -430,7 +430,7 @@
 #### 触发示例：
 `"查询校验任务 12345 的结果"`
 
-### 39. `get_db_table_diff_details`
+### Tool 39: get_db_table_diff_details
 #### 详细描述：
 查询增量校验任务库表不一致详情。
 #### 调试所需的输入参数:
@@ -443,7 +443,7 @@
 #### 触发示例：
 `"查询校验任务 12345 中 business 库下表task的不一致详情"`
 
-### 40. `generate_validation_result_file`
+### Tool 40: generate_validation_result_file
 #### 详细描述：
 增量校验任务生成校验结果文件。
 #### 调试所需的输入参数:
@@ -452,7 +452,7 @@
 #### 触发示例：
 `"生成校验任务 12345 的校验结果文件"`
 
-### 41. `describe_supported_validation_types`
+### Tool 41: describe_supported_validation_types
 #### 详细描述：
 查询任务支持的校验任务类型。
 #### 调试所需的输入参数:
@@ -462,7 +462,7 @@
 #### 触发示例：
 `"查询任务 12345 支持的校验任务类型"`
 
-### 42. `modify_validation_task`
+### Tool 42: modify_validation_task
 #### 详细描述：
 修改校验任务。
 #### 调试所需的输入参数:
@@ -472,7 +472,7 @@
 #### 触发示例：
 `"修改校验任务 12345，校验对象改为business2库下的所有表"`
 
-### 43. `create_data_source`
+### Tool 43: create_data_source
 #### 详细描述：
 创建数据源。
 #### 调试所需的输入参数:
@@ -482,7 +482,7 @@
 #### 触发示例：
 `"创建DTS数据源mig_src，火山引擎MySQL mysql-abcde，用户名和密码:username password"`
 
-### 44. `list_data_source`
+### Tool 44: list_data_source
 #### 详细描述：
 查询数据源列表。
 #### 调试所需的输入参数:
@@ -496,7 +496,7 @@
 #### 触发示例：
 `"我有哪些DTS数据源"`
 
-### 45. `describe_data_source`
+### Tool 45: describe_data_source
 #### 详细描述：
 查询数据源详细信息。
 #### 调试所需的输入参数:
@@ -505,7 +505,7 @@
 #### 触发示例：
 `"查询数据源 19458 的详细信息"`
 
-### 46. `modify_data_source`
+### Tool 46: modify_data_source
 #### 详细描述：
 修改数据源。
 #### 调试所需的输入参数:
@@ -515,7 +515,7 @@
 #### 触发示例：
 `"修改数据源 19458，实例ID改为 mysql-19754"`
 
-### 47. `delete_data_source`
+### Tool 47: delete_data_source
 #### 详细描述：
 删除数据源。
 #### 调试所需的输入参数:
@@ -533,6 +533,28 @@
 ## 鉴权方式  
 从 volcengine 管理控制台获取 volcengine 访问密钥 ID、秘密访问密钥和区域
 
+## 安装部署
+
+### 系统依赖
+- 安装 Python 3.11 或者更高版本
+- 安装 uv
+    - 如果是linux系统
+  ```
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+    - 如果是window系统
+  ```
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+- 同步依赖项并更新uv.lock:
+  ```bash
+  uv sync
+  ```
+- 构建mcp server:
+  ```bash
+  uv build
+  ```
+
 ### UVX
 
 ```json
@@ -549,7 +571,7 @@
                 "VOLCENGINE_ACCESS_KEY": "your-access-key-id",
                 "VOLCENGINE_SECRET_KEY": "your-access-key-secret",
                 "VOLCENGINE_REGION": "volcengine region",
-                "VOLCENGINE_ENDPOINT": "volcengine endpoint",
+                "VOLCENGINE_ENDPOINT": "volcengine endpoint"
             }
         }
     }
@@ -558,5 +580,3 @@
 
 ## License
 volcengine/mcp-server is licensed under the [MIT License](https://github.com/volcengine/mcp-server/blob/main/LICENSE).
-
-
